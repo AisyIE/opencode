@@ -10,7 +10,7 @@ import { Log } from "../../util/log"
 import { lazy } from "../../util/lazy"
 import { Global } from "../../global"
 import { Instance } from "../../project/instance"
-import { ConfigFileEditError, resolveConfigPath, updateConfigFile } from "../../config/config-file"
+import { type ConfigEdit, ConfigFileEditError, resolveConfigPath, updateConfigFile } from "../../config/config-file"
 
 const log = Log.create({ service: "server" })
 
@@ -181,7 +181,7 @@ export const ConfigRoutes = lazy(() =>
         const baseDir = scope === "global" ? Global.Path.config : projectRoot
         const configPath = await resolveConfigPath(baseDir, { includeDotOpencode: scope === "project" })
 
-        const edits = [
+        const edits: ConfigEdit[] = [
           {
             path: ["provider", providerID, "options", "baseURL"],
             value: baseURL,

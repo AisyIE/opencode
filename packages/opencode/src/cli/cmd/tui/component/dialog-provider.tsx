@@ -113,7 +113,14 @@ export function createDialogProviderOptions() {
       return
     }
 
-    const preset = await selectOption<ProviderPreset>("Select preset", PROVIDER_PRESETS)
+    const preset = await selectOption<ProviderPreset>(
+      "Select preset",
+      PROVIDER_PRESETS.map((item) => ({
+        title: item.title,
+        value: item,
+        description: item.description,
+      })),
+    )
     if (!preset) {
       dialog.replace(() => <DialogProvider />)
       return
