@@ -1488,6 +1488,10 @@ export type ProviderConfig = {
     apiKey?: string
     baseURL?: string
     /**
+     * Use OpenAI chat completions API instead of the Responses API.
+     */
+    useChatCompletions?: boolean
+    /**
      * GitHub Enterprise URL for copilot authentication
      */
     enterpriseUrl?: string
@@ -2507,6 +2511,44 @@ export type ConfigProvidersResponses = {
 }
 
 export type ConfigProvidersResponse = ConfigProvidersResponses[keyof ConfigProvidersResponses]
+
+export type ConfigProviderPresetsApplyData = {
+  body?: {
+    preset: "openai-responses" | "openai-classic" | "anthropic" | "gemini"
+    scope: "global" | "project"
+    baseURL: string
+    apiKey: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/config/provider-presets/apply"
+}
+
+export type ConfigProviderPresetsApplyErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ConfigProviderPresetsApplyError = ConfigProviderPresetsApplyErrors[keyof ConfigProviderPresetsApplyErrors]
+
+export type ConfigProviderPresetsApplyResponses = {
+  /**
+   * Preset applied
+   */
+  200: {
+    ok: true
+    providerID: string
+    scope: "global" | "project"
+    configPath: string
+  }
+}
+
+export type ConfigProviderPresetsApplyResponse =
+  ConfigProviderPresetsApplyResponses[keyof ConfigProviderPresetsApplyResponses]
 
 export type ToolIdsData = {
   body?: never

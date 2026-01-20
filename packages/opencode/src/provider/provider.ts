@@ -122,7 +122,8 @@ export namespace Provider {
     openai: async () => {
       return {
         autoload: false,
-        async getModel(sdk: any, modelID: string, _options?: Record<string, any>) {
+        async getModel(sdk: any, modelID: string, options?: Record<string, any>) {
+          if (options?.useChatCompletions) return sdk.chat(modelID)
           return sdk.responses(modelID)
         },
         options: {},

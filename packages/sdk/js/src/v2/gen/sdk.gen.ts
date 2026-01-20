@@ -14,6 +14,8 @@ import type {
   CommandListResponses,
   Config as Config2,
   ConfigGetResponses,
+  ConfigProviderPresetsApplyErrors,
+  ConfigProviderPresetsApplyResponses,
   ConfigProvidersResponses,
   ConfigUpdateErrors,
   ConfigUpdateResponses,
@@ -532,6 +534,53 @@ export class Pty extends HeyApiClient {
   }
 }
 
+export class ProviderPresets extends HeyApiClient {
+  /**
+   * Apply provider preset
+   *
+   * Apply a provider preset by writing config options and storing API key credentials.
+   */
+  public apply<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      preset?: "openai-responses" | "openai-classic" | "anthropic" | "gemini"
+      scope?: "global" | "project"
+      baseURL?: string
+      apiKey?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "preset" },
+            { in: "body", key: "scope" },
+            { in: "body", key: "baseURL" },
+            { in: "body", key: "apiKey" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ConfigProviderPresetsApplyResponses,
+      ConfigProviderPresetsApplyErrors,
+      ThrowOnError
+    >({
+      url: "/config/provider-presets/apply",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Config extends HeyApiClient {
   /**
    * Get configuration
@@ -604,6 +653,11 @@ export class Config extends HeyApiClient {
       ...options,
       ...params,
     })
+  }
+
+  private _providerPresets?: ProviderPresets
+  get providerPresets(): ProviderPresets {
+    return (this._providerPresets ??= new ProviderPresets({ client: this.client }))
   }
 }
 

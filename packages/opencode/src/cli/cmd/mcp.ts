@@ -12,8 +12,8 @@ import { Instance } from "../../project/instance"
 import { Installation } from "../../installation"
 import path from "path"
 import { Global } from "../../global"
-import { modify, applyEdits } from "jsonc-parser"
 import { Bus } from "../../bus"
+import { resolveConfigPath, updateConfigFile } from "../../config/config-file"
 
 function getAuthStatusIcon(status: MCP.AuthStatus): string {
   switch (status) {
@@ -379,40 +379,17 @@ export const McpLogoutCommand = cmd({
   },
 })
 
-async function resolveConfigPath(baseDir: string, global = false) {
-  // Check for existing config files (prefer .jsonc over .json, check .opencode/ subdirectory too)
-  const candidates = [path.join(baseDir, "opencode.json"), path.join(baseDir, "opencode.jsonc")]
-
-  if (!global) {
-    candidates.push(path.join(baseDir, ".opencode", "opencode.json"), path.join(baseDir, ".opencode", "opencode.jsonc"))
-  }
-
-  for (const candidate of candidates) {
-    if (await Bun.file(candidate).exists()) {
-      return candidate
-    }
-  }
-
-  // Default to opencode.json if none exist
-  return candidates[0]
-}
-
 async function addMcpToConfig(name: string, mcpConfig: Config.Mcp, configPath: string) {
-  const file = Bun.file(configPath)
-
-  let text = "{}"
-  if (await file.exists()) {
-    text = await file.text()
-  }
-
-  // Use jsonc-parser to modify while preserving comments
-  const edits = modify(text, ["mcp", name], mcpConfig, {
-    formattingOptions: { tabSize: 2, insertSpaces: true },
-  })
-  const result = applyEdits(text, edits)
-
-  await Bun.write(configPath, result)
-
+  await updateConfigFile(
+    configPath,
+    [
+      {
+        path: ["mcp", name],
+        value: mcpConfig,
+      },
+    ],
+    { ensureSchema: true },
+  )
   return configPath
 }
 
@@ -430,8 +407,8 @@ export const McpAddCommand = cmd({
 
         // Resolve config paths eagerly for hints
         const [projectConfigPath, globalConfigPath] = await Promise.all([
-          resolveConfigPath(Instance.worktree),
-          resolveConfigPath(Global.Path.config, true),
+          resolveConfigPath(Instance.worktree, { includeDotOpencode: true }),
+          resolveConfigPath(Global.Path.config),
         ])
 
         // Determine scope
