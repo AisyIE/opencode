@@ -361,9 +361,9 @@ type ServerReadyData = { url: string; password: string | null }
 // Gate component that waits for the server to be ready
 function ServerGate(props: { children: (data: Accessor<ServerReadyData>) => JSX.Element }) {
   const [serverData] = createResource<ServerReadyData>(() =>
-    invoke("ensure_server_ready").then((v) => {
-      return new Promise((res) => setTimeout(() => res(v), 2000))
-    }),
+    invoke<ServerReadyData>("ensure_server_ready").then(
+      (value) => new Promise((resolve) => setTimeout(() => resolve(value), 2000)),
+    ),
   )
 
   return (
