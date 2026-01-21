@@ -1,35 +1,45 @@
 import { Component, Show, createMemo } from "solid-js"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { Dialog } from "@opencode-ai/ui/dialog"
-import { List } from "@opencode-ai/ui/list"
-import { Tag } from "@opencode-ai/ui/tag"
-import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
+import { Icon } from "@opencode-ai/ui/icon"
 import { IconName } from "@opencode-ai/ui/icons/provider"
+import { List } from "@opencode-ai/ui/list"
+import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
+import { Tag } from "@opencode-ai/ui/tag"
+import { useLanguage } from "@/context/language"
+import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { DialogConnectProvider } from "./dialog-connect-provider"
 import { DialogConnectProviderPreset } from "./dialog-connect-provider-preset"
-import { Icon } from "@opencode-ai/ui/icon"
 
 export const DialogSelectProvider: Component = () => {
   const dialog = useDialog()
   const providers = useProviders()
-  const items = createMemo(() => [
-    ...providers.all(),
-    {
-      id: "other",
-      name: "Other provider",
-    },
-  ])
+  const language = useLanguage()
+
+  const popularGroup = () => language.t("dialog.provider.group.popular")
+  const otherGroup = () => language.t("dialog.provider.group.other")
+
+  const items = createMemo(() => {
+    language.locale()
+    return [
+      ...providers.all(),
+      {
+        id: "other",
+        name: language.t("dialog.provider.otherProvider"),
+      },
+    ]
+  })
 
   return (
-    <Dialog title="Connect provider">
+    <Dialog title={language.t("command.provider.connect")}>
       <List
-        search={{ placeholder: "Search providers", autofocus: true }}
+        search={{ placeholder: language.t("dialog.provider.search.placeholder"), autofocus: true }}
+        emptyMessage={language.t("dialog.provider.empty")}
         activeIcon="plus-small"
         key={(x) => x?.id}
         items={items}
         filterKeys={["id", "name"]}
-        groupBy={(x) => (popularProviders.includes(x.id) ? "Popular" : "Other")}
+        groupBy={(x) => (popularProviders.includes(x.id) ? popularGroup() : otherGroup())}
         sortBy={(a, b) => {
           if (a.id === "other") return -1
           if (b.id === "other") return 1
@@ -38,8 +48,9 @@ export const DialogSelectProvider: Component = () => {
           return a.name.localeCompare(b.name)
         }}
         sortGroupsBy={(a, b) => {
-          if (a.category === "Popular" && b.category !== "Popular") return -1
-          if (b.category === "Popular" && a.category !== "Popular") return 1
+          const popular = popularGroup()
+          if (a.category === popular && b.category !== popular) return -1
+          if (b.category === popular && a.category !== popular) return 1
           return 0
         }}
         onSelect={(x) => {
@@ -61,10 +72,10 @@ export const DialogSelectProvider: Component = () => {
             </Show>
             <span>{i.name}</span>
             <Show when={i.id === "opencode"}>
-              <Tag>Recommended</Tag>
+              <Tag>{language.t("dialog.provider.tag.recommended")}</Tag>
             </Show>
             <Show when={i.id === "anthropic"}>
-              <div class="text-14-regular text-text-weak">Connect with Claude Pro/Max or API key</div>
+              <div class="text-14-regular text-text-weak">{language.t("dialog.provider.anthropic.note")}</div>
             </Show>
           </div>
         )}
