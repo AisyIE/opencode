@@ -2,13 +2,13 @@ import { Global } from "../global"
 import { Log } from "../util/log"
 import path from "path"
 import z from "zod"
-import { data } from "./models-macro" with { type: "macro" }
 import { Installation } from "../installation"
 import { Flag } from "../flag/flag"
 
 export namespace ModelsDev {
   const log = Log.create({ service: "models.dev" })
   const filepath = path.join(Global.Path.cache, "models.json")
+  const api = "https://models.dev/api.json"
 
   export const Model = z.object({
     id: z.string(),
@@ -81,11 +81,21 @@ export namespace ModelsDev {
     const file = Bun.file(filepath)
     const result = await file.json().catch(() => {})
     if (result) return result as Record<string, Provider>
-    if (typeof data === "function") {
-      const json = await data()
-      return JSON.parse(json) as Record<string, Provider>
+
+    const overridePath = process.env.MODELS_DEV_API_JSON
+    if (overridePath) {
+      const overrideFile = Bun.file(overridePath)
+      if (await overrideFile.exists()) {
+        return JSON.parse(await overrideFile.text()) as Record<string, Provider>
+      }
     }
-    const json = await fetch("https://models.dev/api.json").then((x) => x.text())
+
+    const json = await fetch(api, {
+      headers: {
+        "User-Agent": Installation.USER_AGENT,
+      },
+      signal: AbortSignal.timeout(10 * 1000),
+    }).then((x) => x.text())
     return JSON.parse(json) as Record<string, Provider>
   }
 
@@ -95,7 +105,7 @@ export namespace ModelsDev {
     log.info("refreshing", {
       file,
     })
-    const result = await fetch("https://models.dev/api.json", {
+    const result = await fetch(api, {
       headers: {
         "User-Agent": Installation.USER_AGENT,
       },

@@ -42,6 +42,7 @@ import { Tool } from "@/tool/tool"
 import { PermissionNext } from "@/permission/next"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
+import { streamTitleWithFallback } from "./title"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
@@ -1754,60 +1755,72 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     providerID: string
     modelID: string
   }) {
-    if (input.session.parentID) return
-    if (!Session.isDefaultTitle(input.session.title)) return
+    try {
+      if (input.session.parentID) return
+      if (!Session.isDefaultTitle(input.session.title)) return
 
-    // Find first non-synthetic user message
-    const firstRealUserIdx = input.history.findIndex(
-      (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
-    )
-    if (firstRealUserIdx === -1) return
-
-    const isFirst =
-      input.history.filter((m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic))
-        .length === 1
-    if (!isFirst) return
-
-    // Gather all messages up to and including the first real user message for context
-    // This includes any shell/subtask executions that preceded the user's first prompt
-    const contextMessages = input.history.slice(0, firstRealUserIdx + 1)
-    const firstRealUser = contextMessages[firstRealUserIdx]
-
-    // For subtask-only messages (from command invocations), extract the prompt directly
-    // since toModelMessage converts subtask parts to generic "The following tool was executed by the user"
-    const subtaskParts = firstRealUser.parts.filter((p) => p.type === "subtask") as MessageV2.SubtaskPart[]
-    const hasOnlySubtaskParts = subtaskParts.length > 0 && firstRealUser.parts.every((p) => p.type === "subtask")
-
-    const agent = await Agent.get("title")
-    if (!agent) return
-    const model = await iife(async () => {
-      if (agent.model) return await Provider.getModel(agent.model.providerID, agent.model.modelID)
-      return (
-        (await Provider.getSmallModel(input.providerID)) ?? (await Provider.getModel(input.providerID, input.modelID))
+      // Find first non-synthetic user message
+      const firstRealUserIdx = input.history.findIndex(
+        (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
       )
-    })
-    const result = await LLM.stream({
-      agent,
-      user: firstRealUser.info as MessageV2.User,
-      system: [],
-      small: true,
-      tools: {},
-      model,
-      abort: new AbortController().signal,
-      sessionID: input.session.id,
-      retries: 2,
-      messages: [
+      if (firstRealUserIdx === -1) return
+
+      const isFirst =
+        input.history.filter((m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic))
+          .length === 1
+      if (!isFirst) return
+
+      // Gather all messages up to and including the first real user message for context
+      // This includes any shell/subtask executions that preceded the user's first prompt
+      const contextMessages = input.history.slice(0, firstRealUserIdx + 1)
+      const firstRealUser = contextMessages[firstRealUserIdx]
+
+      // For subtask-only messages (from command invocations), extract the prompt directly
+      // since toModelMessages converts subtask parts to generic "The following tool was executed by the user"
+      const subtaskParts = firstRealUser.parts.filter((p) => p.type === "subtask") as MessageV2.SubtaskPart[]
+      const hasOnlySubtaskParts = subtaskParts.length > 0 && firstRealUser.parts.every((p) => p.type === "subtask")
+
+      const agent = await Agent.get("title")
+      if (!agent) return
+
+      const primaryModel = await Provider.getModel(input.providerID, input.modelID)
+      const preferredModel = await iife(async () => {
+        if (agent.model) return await Provider.getModel(agent.model.providerID, agent.model.modelID)
+        return (await Provider.getSmallModel(input.providerID)) ?? primaryModel
+      })
+
+      const messages = [
         {
-          role: "user",
+          role: "user" as const,
           content: "Generate a title for this conversation:\n",
         },
         ...(hasOnlySubtaskParts
           ? [{ role: "user" as const, content: subtaskParts.map((p) => p.prompt).join("\n") }]
-          : MessageV2.toModelMessages(contextMessages, model)),
-      ],
-    })
-    const text = await result.text.catch((err) => log.error("failed to generate title", { error: err }))
-    if (text)
+          : MessageV2.toModelMessages(contextMessages, preferredModel)),
+      ]
+
+      const streamed = await streamTitleWithFallback({
+        preferredModel,
+        primaryModel,
+        agent,
+        user: firstRealUser.info as MessageV2.User,
+        sessionID: input.session.id,
+        system: [],
+        small: true,
+        tools: {},
+        abort: new AbortController().signal,
+        retries: 2,
+        messages,
+      })
+
+      if (!streamed.ok) {
+        log.error("failed to generate title", { error: streamed.error })
+        return
+      }
+
+      const text = streamed.text
+      if (!text) return
+
       return Session.update(
         input.session.id,
         (draft) => {
@@ -1823,5 +1836,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         },
         { touch: false },
       )
+    } catch (error) {
+      log.error("failed to ensure title", { error })
+    }
   }
 }

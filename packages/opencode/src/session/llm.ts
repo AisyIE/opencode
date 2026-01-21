@@ -58,7 +58,7 @@ export namespace LLM {
       providerID: input.model.providerID,
     })
     const [language, cfg, provider, auth] = await Promise.all([
-      Provider.getLanguage(input.model),
+      Provider.getLanguage(input.model, { sessionID: input.sessionID }),
       Config.get(),
       Provider.getProvider(input.model.providerID),
       Auth.get(input.model.providerID),

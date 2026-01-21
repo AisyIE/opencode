@@ -24,11 +24,14 @@ const PROVIDER_PRIORITY: Record<string, number> = {
 
 type PresetId = "openai-responses" | "openai-classic" | "anthropic" | "gemini"
 type PresetScope = "global" | "project"
+type PoolPolicy = "metered" | "quota"
+type PresetSaveMode = "single" | "pool"
 
 type ProviderPreset = {
   id: PresetId
   title: string
   providerID: string
+  npm: string
   defaultBaseURL: string
   description: string
 }
@@ -38,6 +41,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     id: "openai-responses",
     title: "OpenAI (Responses API)",
     providerID: "openai",
+    npm: "@ai-sdk/openai",
     defaultBaseURL: "https://api.openai.com/v1",
     description: "Use OpenAI Responses API with official or compatible endpoints.",
   },
@@ -45,6 +49,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     id: "openai-classic",
     title: "OpenAI (Classic API)",
     providerID: "openai",
+    npm: "@ai-sdk/openai",
     defaultBaseURL: "https://api.openai.com/v1",
     description: "Use chat completions for OpenAI-compatible proxies.",
   },
@@ -52,6 +57,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     id: "anthropic",
     title: "Anthropic",
     providerID: "anthropic",
+    npm: "@ai-sdk/anthropic",
     defaultBaseURL: "https://api.anthropic.com/v1",
     description: "Anthropic API or compatible proxies.",
   },
@@ -59,6 +65,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     id: "gemini",
     title: "Gemini",
     providerID: "google",
+    npm: "@ai-sdk/google",
     defaultBaseURL: "https://generativelanguage.googleapis.com/v1beta",
     description: "Google Gemini API or compatible proxies.",
   },
@@ -100,6 +107,47 @@ export function createDialogProviderOptions() {
       return parsed.protocol === "http:" || parsed.protocol === "https:"
     } catch {
       return false
+    }
+  }
+
+  const isValidProviderId = (value: string) => {
+    if (!value) return false
+    if (value.includes("/")) return false
+    return /^[a-z][a-z0-9-_]*$/.test(value) && value.length <= 50
+  }
+
+  const suggestPoolEntry = (baseURL: string) => {
+    try {
+      const parsed = new URL(baseURL)
+      const host = parsed.hostname
+      const slug = host
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+/, "")
+        .replace(/-+$/, "")
+      const suffix = Math.random().toString(36).slice(2, 6)
+      return {
+        entryId: slug ? `${slug}-${suffix}` : `entry-${suffix}`,
+        label: host,
+      }
+    } catch {
+      const suffix = Math.random().toString(36).slice(2, 6)
+      return { entryId: `entry-${suffix}` }
+    }
+  }
+
+  const suggestProviderIdentity = (baseURL: string) => {
+    try {
+      const parsed = new URL(baseURL)
+      const host = parsed.hostname
+      const slug = host
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+/, "")
+        .replace(/-+$/, "")
+      return { providerId: slug ? slug : "provider", providerName: host }
+    } catch {
+      return { providerId: "provider", providerName: "" }
     }
   }
 
@@ -145,16 +193,129 @@ export function createDialogProviderOptions() {
     }
 
     try {
-      await sdk.client.config.providerPresets.apply({
-        preset: preset.id,
-        scope,
-        baseURL: baseURL.trim(),
-        apiKey: apiKey.trim(),
-      })
+      const syncModels = await selectOption<boolean>("Sync models from endpoint", [
+        { title: "Yes", value: true, description: "Fetch /models and store a provider whitelist (best-effort)." },
+        { title: "No", value: false, description: "Skip model sync." },
+      ])
+      if (syncModels == null) {
+        dialog.replace(() => <DialogProvider />)
+        return
+      }
+
+      const targetMode = await selectOption<"builtin" | "custom">("Target provider", [
+        { title: "Use built-in provider", value: "builtin", description: "Apply preset to the built-in provider slot." },
+        { title: "Create new provider", value: "custom", description: "Create a named provider for proxies/relays." },
+      ])
+      if (!targetMode) {
+        dialog.replace(() => <DialogProvider />)
+        return
+      }
+
+      let targetProviderID = preset.providerID
+      let targetProviderName: string | undefined
+      let targetProviderNpm: string | undefined
+
+      if (targetMode === "custom") {
+        const suggestedProvider = suggestProviderIdentity(baseURL.trim())
+        const name = await promptValue("Provider name", suggestedProvider.providerName || preset.title, "RightCode")
+        if (!name?.trim()) {
+          toast.show({ message: "Provider name is required", variant: "error" })
+          dialog.replace(() => <DialogProvider />)
+          return
+        }
+        const id = await promptValue("Provider ID", suggestedProvider.providerId, "rightcode")
+        if (!id?.trim() || !isValidProviderId(id.trim())) {
+          toast.show({ message: "Invalid Provider ID (use lowercase slug)", variant: "error" })
+          dialog.replace(() => <DialogProvider />)
+          return
+        }
+        targetProviderID = id.trim()
+        targetProviderName = name.trim()
+        targetProviderNpm = preset.npm
+      }
+
+      const saveMode = await selectOption<PresetSaveMode>("Save mode", [
+        {
+          title: "Single provider config",
+          value: "single",
+          description: "Overwrite base URL and store one API key.",
+        },
+        {
+          title: "Key pool entry",
+          value: "pool",
+          description: "Add this endpoint as a pool entry for rotation/failover.",
+        },
+      ])
+
+      if (!saveMode) {
+        dialog.replace(() => <DialogProvider />)
+        return
+      }
+
+      if (saveMode === "single") {
+        const res = await sdk.client.config.providerPresets.apply({
+          preset: preset.id,
+          scope,
+          baseURL: baseURL.trim(),
+          apiKey: apiKey.trim(),
+          syncModels,
+          ...(targetMode === "custom"
+            ? { targetProviderID: targetProviderID, targetProviderName: targetProviderName ?? targetProviderID }
+            : {}),
+        })
+        if (res.data?.syncError) toast.show({ message: res.data.syncError, variant: "error" })
+      } else {
+        const suggested = suggestPoolEntry(baseURL.trim())
+        const entryId = await promptValue("Entry ID", suggested.entryId, "proxy-a")
+        if (!entryId?.trim()) {
+          dialog.replace(() => <DialogProvider />)
+          return
+        }
+
+        const policy = await selectOption<PoolPolicy>("Rotation policy", [
+          { title: "Metered (sticky)", value: "metered", description: "Prefer reusing one entry for cache reuse." },
+          { title: "Quota (balanced)", value: "quota", description: "Distribute across entries for throughput." },
+        ])
+        if (!policy) {
+          dialog.replace(() => <DialogProvider />)
+          return
+        }
+
+        await sdk.client.auth.pool.set({
+          providerID: targetProviderID,
+          entryId: entryId.trim(),
+          key: apiKey.trim(),
+        })
+        try {
+          const res = await sdk.client.config.providerKeyPools.entries.apply({
+            providerID: targetProviderID,
+            scope,
+            ...(targetMode === "custom"
+              ? { providerName: targetProviderName ?? targetProviderID, providerNpm: targetProviderNpm }
+              : {}),
+            entry: {
+              entryId: entryId.trim(),
+              label: suggested.label,
+              baseURL: baseURL.trim(),
+            },
+            providerOptions:
+              preset.id === "openai-responses" || preset.id === "openai-classic"
+                ? { useChatCompletions: preset.id === "openai-classic" }
+                : undefined,
+            pool: { policy },
+            syncModels,
+          })
+          if (res.data?.syncError) toast.show({ message: res.data.syncError, variant: "error" })
+        } catch (error) {
+          await sdk.client.auth.pool.remove({ providerID: targetProviderID, entryId: entryId.trim() }).catch(() => {})
+          throw error
+        }
+      }
+
       await sdk.client.instance.dispose()
       await sync.bootstrap()
-      toast.show({ message: "Preset applied", variant: "success" })
-      dialog.replace(() => <DialogModel providerID={preset.providerID} />)
+      toast.show({ message: saveMode === "pool" ? "Key pool entry added" : "Preset applied", variant: "success" })
+      dialog.replace(() => <DialogModel providerID={targetProviderID} />)
     } catch (error) {
       toast.error(error)
       dialog.replace(() => <DialogProvider />)

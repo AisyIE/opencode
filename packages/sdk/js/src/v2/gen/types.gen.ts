@@ -1484,6 +1484,48 @@ export type ProviderConfig = {
   }
   whitelist?: Array<string>
   blacklist?: Array<string>
+  /**
+   * Optional API key pool configuration for this provider.
+   */
+  pool?: {
+    /**
+     * Key pool policy: 'metered' prefers reusing one entry for cache reuse; 'quota' distributes requests across entries.
+     */
+    policy?: "metered" | "quota"
+    /**
+     * Selection affinity: 'session' sticks to one entry per session; 'none' may select per request.
+     */
+    affinity?: "session" | "none"
+    /**
+     * Maximum number of failover attempts across pool entries on retryable errors.
+     */
+    maxFailoverAttempts?: number
+    /**
+     * Pool entries (API keys are stored in the auth store, not in config files).
+     */
+    entries?: Array<{
+      /**
+       * Stable identifier for this pool entry.
+       */
+      entryId: string
+      /**
+       * Optional display label.
+       */
+      label?: string
+      /**
+       * Base URL for this endpoint (no secrets).
+       */
+      baseURL: string
+      /**
+       * Enable/disable this entry (default true).
+       */
+      enabled?: boolean
+      /**
+       * Optional weighting for load balancing (default 1).
+       */
+      weight?: number
+    }>
+  }
   options?: {
     apiKey?: string
     baseURL?: string
@@ -2518,6 +2560,9 @@ export type ConfigProviderPresetsApplyData = {
     scope: "global" | "project"
     baseURL: string
     apiKey: string
+    targetProviderID?: string
+    targetProviderName?: string
+    syncModels?: boolean
   }
   path?: never
   query?: {
@@ -2544,11 +2589,110 @@ export type ConfigProviderPresetsApplyResponses = {
     providerID: string
     scope: "global" | "project"
     configPath: string
+    modelsSynced?: boolean
+    syncError?: string
   }
 }
 
 export type ConfigProviderPresetsApplyResponse =
   ConfigProviderPresetsApplyResponses[keyof ConfigProviderPresetsApplyResponses]
+
+export type ConfigProviderKeyPoolsEntriesApplyData = {
+  body?: {
+    providerID: string
+    scope: "global" | "project"
+    providerName?: string
+    providerNpm?: string
+    entry: {
+      entryId: string
+      label?: string
+      baseURL: string
+      enabled?: boolean
+      weight?: number
+    }
+    providerOptions?: {
+      useChatCompletions?: boolean
+    }
+    pool?: {
+      policy?: "metered" | "quota"
+      affinity?: "session" | "none"
+      maxFailoverAttempts?: number
+    }
+    syncModels?: boolean
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/config/provider-key-pools/entries/apply"
+}
+
+export type ConfigProviderKeyPoolsEntriesApplyErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ConfigProviderKeyPoolsEntriesApplyError =
+  ConfigProviderKeyPoolsEntriesApplyErrors[keyof ConfigProviderKeyPoolsEntriesApplyErrors]
+
+export type ConfigProviderKeyPoolsEntriesApplyResponses = {
+  /**
+   * Entry applied
+   */
+  200: {
+    ok: true
+    providerID: string
+    entryId: string
+    scope: "global" | "project"
+    configPath: string
+    modelsSynced?: boolean
+    syncError?: string
+  }
+}
+
+export type ConfigProviderKeyPoolsEntriesApplyResponse =
+  ConfigProviderKeyPoolsEntriesApplyResponses[keyof ConfigProviderKeyPoolsEntriesApplyResponses]
+
+export type ConfigProviderKeyPoolsEntriesRemoveData = {
+  body?: {
+    providerID: string
+    scope: "global" | "project"
+    entryId: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/config/provider-key-pools/entries/remove"
+}
+
+export type ConfigProviderKeyPoolsEntriesRemoveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ConfigProviderKeyPoolsEntriesRemoveError =
+  ConfigProviderKeyPoolsEntriesRemoveErrors[keyof ConfigProviderKeyPoolsEntriesRemoveErrors]
+
+export type ConfigProviderKeyPoolsEntriesRemoveResponses = {
+  /**
+   * Entry removed
+   */
+  200: {
+    ok: true
+    providerID: string
+    entryId: string
+    scope: "global" | "project"
+    configPath: string
+  }
+}
+
+export type ConfigProviderKeyPoolsEntriesRemoveResponse =
+  ConfigProviderKeyPoolsEntriesRemoveResponses[keyof ConfigProviderKeyPoolsEntriesRemoveResponses]
 
 export type ToolIdsData = {
   body?: never
@@ -4905,6 +5049,68 @@ export type AuthSetResponses = {
 }
 
 export type AuthSetResponse = AuthSetResponses[keyof AuthSetResponses]
+
+export type AuthPoolRemoveData = {
+  body?: never
+  path: {
+    providerID: string
+    entryId: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/auth/{providerID}/pool/{entryId}"
+}
+
+export type AuthPoolRemoveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type AuthPoolRemoveError = AuthPoolRemoveErrors[keyof AuthPoolRemoveErrors]
+
+export type AuthPoolRemoveResponses = {
+  /**
+   * Successfully removed pool entry API key
+   */
+  200: boolean
+}
+
+export type AuthPoolRemoveResponse = AuthPoolRemoveResponses[keyof AuthPoolRemoveResponses]
+
+export type AuthPoolSetData = {
+  body?: {
+    key: string
+  }
+  path: {
+    providerID: string
+    entryId: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/auth/{providerID}/pool/{entryId}"
+}
+
+export type AuthPoolSetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type AuthPoolSetError = AuthPoolSetErrors[keyof AuthPoolSetErrors]
+
+export type AuthPoolSetResponses = {
+  /**
+   * Successfully set pool entry API key
+   */
+  200: boolean
+}
+
+export type AuthPoolSetResponse = AuthPoolSetResponses[keyof AuthPoolSetResponses]
 
 export type EventSubscribeData = {
   body?: never

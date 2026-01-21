@@ -36,6 +36,12 @@ export namespace Auth {
   export type Info = z.infer<typeof Info>
 
   const filepath = path.join(Global.Path.data, "auth.json")
+  const poolFilepath = path.join(Global.Path.data, "auth-pool.json")
+
+  const PoolStore = z.record(z.string(), z.record(z.string(), z.object({ key: z.string() }).strict())).meta({
+    ref: "AuthPoolStore",
+  })
+  type PoolStore = z.infer<typeof PoolStore>
 
   export async function get(providerID: string) {
     const auth = await all()
@@ -69,5 +75,40 @@ export namespace Auth {
     delete data[key]
     await Bun.write(file, JSON.stringify(data, null, 2))
     await fs.chmod(file.name!, 0o600)
+  }
+
+  export namespace Pool {
+    export async function all(): Promise<PoolStore> {
+      const file = Bun.file(poolFilepath)
+      const data = await file.json().catch(() => ({}) as Record<string, unknown>)
+      const parsed = PoolStore.safeParse(data)
+      return parsed.success ? parsed.data : {}
+    }
+
+    export async function get(providerID: string, entryId: string): Promise<string | undefined> {
+      const data = await all()
+      return data[providerID]?.[entryId]?.key
+    }
+
+    export async function set(providerID: string, entryId: string, key: string) {
+      const file = Bun.file(poolFilepath)
+      const data = await all()
+      const provider = data[providerID] ?? {}
+      provider[entryId] = { key }
+      await Bun.write(file, JSON.stringify({ ...data, [providerID]: provider }, null, 2))
+      await fs.chmod(file.name!, 0o600)
+    }
+
+    export async function remove(providerID: string, entryId: string) {
+      const file = Bun.file(poolFilepath)
+      const data = await all()
+      if (!data[providerID]) return
+      delete data[providerID][entryId]
+      if (Object.keys(data[providerID]).length === 0) {
+        delete data[providerID]
+      }
+      await Bun.write(file, JSON.stringify(data, null, 2))
+      await fs.chmod(file.name!, 0o600)
+    }
   }
 }

@@ -441,6 +441,75 @@ export namespace Server {
             return c.json(true)
           },
         )
+        .put(
+          "/auth/:providerID/pool/:entryId",
+          describeRoute({
+            summary: "Set pool entry API key",
+            description: "Set API key for a provider pool entry. Secrets are never written to config files.",
+            operationId: "auth.pool.set",
+            responses: {
+              200: {
+                description: "Successfully set pool entry API key",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "param",
+            z.object({
+              providerID: z.string(),
+              entryId: z.string(),
+            }),
+          ),
+          validator(
+            "json",
+            z.object({
+              key: z.string().trim().min(1),
+            }),
+          ),
+          async (c) => {
+            const { providerID, entryId } = c.req.valid("param")
+            const { key } = c.req.valid("json")
+            await Auth.Pool.set(providerID, entryId, key)
+            return c.json(true)
+          },
+        )
+        .delete(
+          "/auth/:providerID/pool/:entryId",
+          describeRoute({
+            summary: "Remove pool entry API key",
+            description: "Remove API key for a provider pool entry.",
+            operationId: "auth.pool.remove",
+            responses: {
+              200: {
+                description: "Successfully removed pool entry API key",
+                content: {
+                  "application/json": {
+                    schema: resolver(z.boolean()),
+                  },
+                },
+              },
+              ...errors(400),
+            },
+          }),
+          validator(
+            "param",
+            z.object({
+              providerID: z.string(),
+              entryId: z.string(),
+            }),
+          ),
+          async (c) => {
+            const { providerID, entryId } = c.req.valid("param")
+            await Auth.Pool.remove(providerID, entryId)
+            return c.json(true)
+          },
+        )
         .get(
           "/event",
           describeRoute({
