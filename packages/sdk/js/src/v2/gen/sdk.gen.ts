@@ -9,11 +9,19 @@ import type {
   AppLogResponses,
   AppSkillsResponses,
   Auth as Auth3,
+  AuthPoolRemoveErrors,
+  AuthPoolRemoveResponses,
+  AuthPoolSetErrors,
+  AuthPoolSetResponses,
   AuthSetErrors,
   AuthSetResponses,
   CommandListResponses,
   Config as Config2,
   ConfigGetResponses,
+  ConfigProviderKeyPoolsEntriesApplyErrors,
+  ConfigProviderKeyPoolsEntriesApplyResponses,
+  ConfigProviderKeyPoolsEntriesRemoveErrors,
+  ConfigProviderKeyPoolsEntriesRemoveResponses,
   ConfigProviderPresetsApplyErrors,
   ConfigProviderPresetsApplyResponses,
   ConfigProvidersResponses,
@@ -547,6 +555,9 @@ export class ProviderPresets extends HeyApiClient {
       scope?: "global" | "project"
       baseURL?: string
       apiKey?: string
+      targetProviderID?: string
+      targetProviderName?: string
+      syncModels?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -560,6 +571,9 @@ export class ProviderPresets extends HeyApiClient {
             { in: "body", key: "scope" },
             { in: "body", key: "baseURL" },
             { in: "body", key: "apiKey" },
+            { in: "body", key: "targetProviderID" },
+            { in: "body", key: "targetProviderName" },
+            { in: "body", key: "syncModels" },
           ],
         },
       ],
@@ -578,6 +592,123 @@ export class ProviderPresets extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+}
+
+export class Entries extends HeyApiClient {
+  /**
+   * Upsert provider key pool entry
+   *
+   * Upsert a provider key pool entry in config. Secrets are stored separately in the auth store.
+   */
+  public apply<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      providerID?: string
+      scope?: "global" | "project"
+      providerName?: string
+      providerNpm?: string
+      entry?: {
+        entryId: string
+        label?: string
+        baseURL: string
+        enabled?: boolean
+        weight?: number
+      }
+      providerOptions?: {
+        useChatCompletions?: boolean
+      }
+      pool?: {
+        policy?: "metered" | "quota"
+        affinity?: "session" | "none"
+        maxFailoverAttempts?: number
+      }
+      syncModels?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "providerID" },
+            { in: "body", key: "scope" },
+            { in: "body", key: "providerName" },
+            { in: "body", key: "providerNpm" },
+            { in: "body", key: "entry" },
+            { in: "body", key: "providerOptions" },
+            { in: "body", key: "pool" },
+            { in: "body", key: "syncModels" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ConfigProviderKeyPoolsEntriesApplyResponses,
+      ConfigProviderKeyPoolsEntriesApplyErrors,
+      ThrowOnError
+    >({
+      url: "/config/provider-key-pools/entries/apply",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Remove provider key pool entry
+   *
+   * Remove a provider key pool entry from config. Does not remove secrets from the auth store.
+   */
+  public remove<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      providerID?: string
+      scope?: "global" | "project"
+      entryId?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "providerID" },
+            { in: "body", key: "scope" },
+            { in: "body", key: "entryId" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ConfigProviderKeyPoolsEntriesRemoveResponses,
+      ConfigProviderKeyPoolsEntriesRemoveErrors,
+      ThrowOnError
+    >({
+      url: "/config/provider-key-pools/entries/remove",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class ProviderKeyPools extends HeyApiClient {
+  private _entries?: Entries
+  get entries(): Entries {
+    return (this._entries ??= new Entries({ client: this.client }))
   }
 }
 
@@ -658,6 +789,11 @@ export class Config extends HeyApiClient {
   private _providerPresets?: ProviderPresets
   get providerPresets(): ProviderPresets {
     return (this._providerPresets ??= new ProviderPresets({ client: this.client }))
+  }
+
+  private _providerKeyPools?: ProviderKeyPools
+  get providerKeyPools(): ProviderKeyPools {
+    return (this._providerKeyPools ??= new ProviderKeyPools({ client: this.client }))
   }
 }
 
@@ -3080,6 +3216,79 @@ export class Formatter extends HeyApiClient {
   }
 }
 
+export class Pool extends HeyApiClient {
+  /**
+   * Remove pool entry API key
+   *
+   * Remove API key for a provider pool entry.
+   */
+  public remove<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerID: string
+      entryId: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "providerID" },
+            { in: "path", key: "entryId" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<AuthPoolRemoveResponses, AuthPoolRemoveErrors, ThrowOnError>({
+      url: "/auth/{providerID}/pool/{entryId}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Set pool entry API key
+   *
+   * Set API key for a provider pool entry. Secrets are never written to config files.
+   */
+  public set<ThrowOnError extends boolean = false>(
+    parameters: {
+      providerID: string
+      entryId: string
+      directory?: string
+      key?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "providerID" },
+            { in: "path", key: "entryId" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "key" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).put<AuthPoolSetResponses, AuthPoolSetErrors, ThrowOnError>({
+      url: "/auth/{providerID}/pool/{entryId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Auth2 extends HeyApiClient {
   /**
    * Set auth credentials
@@ -3116,6 +3325,11 @@ export class Auth2 extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+
+  private _pool?: Pool
+  get pool(): Pool {
+    return (this._pool ??= new Pool({ client: this.client }))
   }
 }
 

@@ -9,7 +9,7 @@ import { Bus } from "@/bus"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
 import { Plugin } from "@/plugin"
-import type { Provider } from "@/provider/provider"
+import { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
 import { SessionCompaction } from "./compaction"
@@ -45,7 +45,11 @@ export namespace SessionProcessor {
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
         needsCompaction = false
-        const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
+        const config = await Config.get()
+        const shouldBreak = config.experimental?.continue_loop_on_deny !== true
+        const maxFailoverAttempts = config.provider?.[input.model.providerID]?.pool
+          ? (config.provider?.[input.model.providerID]?.pool?.maxFailoverAttempts ?? 2)
+          : 0
         while (true) {
           try {
             let currentText: MessageV2.TextPart | undefined
@@ -176,7 +180,7 @@ export namespace SessionProcessor {
                       ...match,
                       state: {
                         status: "completed",
-                        input: value.input,
+                        input: value.input ?? match.state.input,
                         output: value.output.output,
                         metadata: value.output.metadata,
                         title: value.output.title,
@@ -200,7 +204,7 @@ export namespace SessionProcessor {
                       ...match,
                       state: {
                         status: "error",
-                        input: value.input,
+                        input: value.input ?? match.state.input,
                         error: (value.error as any).toString(),
                         time: {
                           start: match.state.time.start,
@@ -345,6 +349,9 @@ export namespace SessionProcessor {
             const retry = SessionRetry.retryable(error)
             if (retry !== undefined) {
               attempt++
+              if (maxFailoverAttempts > 0 && attempt <= maxFailoverAttempts) {
+                await Provider.failoverPool(input.model.providerID, input.sessionID).catch(() => {})
+              }
               const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
               SessionStatus.set(input.sessionID, {
                 type: "retry",

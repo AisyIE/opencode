@@ -80,10 +80,12 @@ export namespace Config {
     }
 
     // Project config has highest precedence (overrides global and remote)
-    for (const file of ["opencode.jsonc", "opencode.json"]) {
-      const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
-      for (const resolved of found.toReversed()) {
-        result = mergeConfigConcatArrays(result, await loadFile(resolved))
+    if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+      for (const file of ["opencode.jsonc", "opencode.json"]) {
+        const found = await Filesystem.findUp(file, Instance.directory, Instance.worktree)
+        for (const resolved of found.toReversed()) {
+          result = mergeConfigConcatArrays(result, await loadFile(resolved))
+        }
       }
     }
 
@@ -99,13 +101,17 @@ export namespace Config {
 
     const directories = [
       Global.Path.config,
-      ...(await Array.fromAsync(
-        Filesystem.up({
-          targets: [".opencode"],
-          start: Instance.directory,
-          stop: Instance.worktree,
-        }),
-      )),
+      // Only scan project .opencode/ directories when project discovery is enabled
+      ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+        ? await Array.fromAsync(
+            Filesystem.up({
+              targets: [".opencode"],
+              start: Instance.directory,
+              stop: Instance.worktree,
+            }),
+          )
+        : []),
+      // Always scan ~/.opencode/ (user home directory)
       ...(await Array.fromAsync(
         Filesystem.up({
           targets: [".opencode"],
@@ -132,9 +138,13 @@ export namespace Config {
         }
       }
 
-      const exists = existsSync(path.join(dir, "node_modules"))
-      const installing = installDependencies(dir)
-      if (!exists) await installing
+      // Avoid spawning bun install processes during tests.
+      // Tests set OPENCODE_TEST_HOME and manage their own fixtures under isolated XDG dirs.
+      if (!process.env.OPENCODE_TEST_HOME) {
+        const exists = existsSync(path.join(dir, "node_modules"))
+        const installing = installDependencies(dir)
+        if (!exists) await installing
+      }
 
       result.command = mergeDeep(result.command ?? {}, await loadCommand(dir))
       result.agent = mergeDeep(result.agent, await loadAgent(dir))
@@ -827,6 +837,42 @@ export namespace Config {
     .extend({
       whitelist: z.array(z.string()).optional(),
       blacklist: z.array(z.string()).optional(),
+      pool: z
+        .object({
+          policy: z
+            .enum(["metered", "quota"])
+            .optional()
+            .describe(
+              "Key pool policy: 'metered' prefers reusing one entry for cache reuse; 'quota' distributes requests across entries.",
+            ),
+          affinity: z
+            .enum(["session", "none"])
+            .optional()
+            .describe("Selection affinity: 'session' sticks to one entry per session; 'none' may select per request."),
+          maxFailoverAttempts: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe("Maximum number of failover attempts across pool entries on retryable errors."),
+          entries: z
+            .array(
+              z
+                .object({
+                  entryId: z.string().trim().min(1).describe("Stable identifier for this pool entry."),
+                  label: z.string().trim().min(1).optional().describe("Optional display label."),
+                  baseURL: z.string().trim().min(1).describe("Base URL for this endpoint (no secrets)."),
+                  enabled: z.boolean().optional().describe("Enable/disable this entry (default true)."),
+                  weight: z.number().positive().optional().describe("Optional weighting for load balancing (default 1)."),
+                })
+                .strict(),
+            )
+            .optional()
+            .describe("Pool entries (API keys are stored in the auth store, not in config files)."),
+        })
+        .strict()
+        .optional()
+        .describe("Optional API key pool configuration for this provider."),
       models: z
         .record(
           z.string(),

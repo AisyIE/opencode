@@ -42,6 +42,7 @@ import { Tool } from "@/tool/tool"
 import { PermissionNext } from "@/permission/next"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
+import { streamTitleWithFallback } from "./title"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
@@ -454,28 +455,30 @@ export namespace SessionPrompt {
           } satisfies MessageV2.ToolPart)
         }
 
-        // Add synthetic user message to prevent certain reasoning models from erroring
-        // If we create assistant messages w/ out user ones following mid loop thinking signatures
-        // will be missing and it can cause errors for models like gemini for example
-        const summaryUserMsg: MessageV2.User = {
-          id: Identifier.ascending("message"),
-          sessionID,
-          role: "user",
-          time: {
-            created: Date.now(),
-          },
-          agent: lastUser.agent,
-          model: lastUser.model,
+        if (task.command) {
+          // Add synthetic user message to prevent certain reasoning models from erroring
+          // If we create assistant messages w/ out user ones following mid loop thinking signatures
+          // will be missing and it can cause errors for models like gemini for example
+          const summaryUserMsg: MessageV2.User = {
+            id: Identifier.ascending("message"),
+            sessionID,
+            role: "user",
+            time: {
+              created: Date.now(),
+            },
+            agent: lastUser.agent,
+            model: lastUser.model,
+          }
+          await Session.updateMessage(summaryUserMsg)
+          await Session.updatePart({
+            id: Identifier.ascending("part"),
+            messageID: summaryUserMsg.id,
+            sessionID,
+            type: "text",
+            text: "Summarize the task tool output above and continue with your task.",
+            synthetic: true,
+          } satisfies MessageV2.TextPart)
         }
-        await Session.updateMessage(summaryUserMsg)
-        await Session.updatePart({
-          id: Identifier.ascending("part"),
-          messageID: summaryUserMsg.id,
-          sessionID,
-          type: "text",
-          text: "Summarize the task tool output above and continue with your task.",
-          synthetic: true,
-        } satisfies MessageV2.TextPart)
 
         continue
       }
@@ -598,7 +601,7 @@ export namespace SessionPrompt {
         sessionID,
         system: [...(await SystemPrompt.environment()), ...(await SystemPrompt.custom())],
         messages: [
-          ...MessageV2.toModelMessage(sessionMessages),
+          ...MessageV2.toModelMessages(sessionMessages, model),
           ...(isLastStep
             ? [
                 {
@@ -1627,7 +1630,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       if (position === last) return args.slice(argIndex).join(" ")
       return args[argIndex]
     })
+    const usesArgumentsPlaceholder = templateCommand.includes("$ARGUMENTS")
     let template = withArgs.replaceAll("$ARGUMENTS", input.arguments)
+
+    // If command doesn't explicitly handle arguments (no $N or $ARGUMENTS placeholders)
+    // but user provided arguments, append them to the template
+    if (placeholders.length === 0 && !usesArgumentsPlaceholder && input.arguments.trim()) {
+      template = template + "\n\n" + input.arguments
+    }
 
     const shell = ConfigMarkdown.shell(template)
     if (shell.length > 0) {
@@ -1745,69 +1755,89 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     providerID: string
     modelID: string
   }) {
-    if (input.session.parentID) return
-    if (!Session.isDefaultTitle(input.session.title)) return
+    try {
+      if (input.session.parentID) return
+      if (!Session.isDefaultTitle(input.session.title)) return
 
-    // Find first non-synthetic user message
-    const firstRealUserIdx = input.history.findIndex(
-      (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
-    )
-    if (firstRealUserIdx === -1) return
+      // Find first non-synthetic user message
+      const firstRealUserIdx = input.history.findIndex(
+        (m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic),
+      )
+      if (firstRealUserIdx === -1) return
 
-    const isFirst =
-      input.history.filter((m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic))
-        .length === 1
-    if (!isFirst) return
+      const isFirst =
+        input.history.filter((m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic))
+          .length === 1
+      if (!isFirst) return
 
-    // Gather all messages up to and including the first real user message for context
-    // This includes any shell/subtask executions that preceded the user's first prompt
-    const contextMessages = input.history.slice(0, firstRealUserIdx + 1)
-    const firstRealUser = contextMessages[firstRealUserIdx]
+      // Gather all messages up to and including the first real user message for context
+      // This includes any shell/subtask executions that preceded the user's first prompt
+      const contextMessages = input.history.slice(0, firstRealUserIdx + 1)
+      const firstRealUser = contextMessages[firstRealUserIdx]
 
-    // For subtask-only messages (from command invocations), extract the prompt directly
-    // since toModelMessage converts subtask parts to generic "The following tool was executed by the user"
-    const subtaskParts = firstRealUser.parts.filter((p) => p.type === "subtask") as MessageV2.SubtaskPart[]
-    const hasOnlySubtaskParts = subtaskParts.length > 0 && firstRealUser.parts.every((p) => p.type === "subtask")
+      // For subtask-only messages (from command invocations), extract the prompt directly
+      // since toModelMessages converts subtask parts to generic "The following tool was executed by the user"
+      const subtaskParts = firstRealUser.parts.filter((p) => p.type === "subtask") as MessageV2.SubtaskPart[]
+      const hasOnlySubtaskParts = subtaskParts.length > 0 && firstRealUser.parts.every((p) => p.type === "subtask")
 
-    const agent = await Agent.get("title")
-    if (!agent) return
-    const result = await LLM.stream({
-      agent,
-      user: firstRealUser.info as MessageV2.User,
-      system: [],
-      small: true,
-      tools: {},
-      model: await iife(async () => {
+      const agent = await Agent.get("title")
+      if (!agent) return
+
+      const primaryModel = await Provider.getModel(input.providerID, input.modelID)
+      const preferredModel = await iife(async () => {
         if (agent.model) return await Provider.getModel(agent.model.providerID, agent.model.modelID)
-        return (
-          (await Provider.getSmallModel(input.providerID)) ?? (await Provider.getModel(input.providerID, input.modelID))
-        )
-      }),
-      abort: new AbortController().signal,
-      sessionID: input.session.id,
-      retries: 2,
-      messages: [
+        return (await Provider.getSmallModel(input.providerID)) ?? primaryModel
+      })
+
+      const messages = [
         {
-          role: "user",
+          role: "user" as const,
           content: "Generate a title for this conversation:\n",
         },
         ...(hasOnlySubtaskParts
           ? [{ role: "user" as const, content: subtaskParts.map((p) => p.prompt).join("\n") }]
-          : MessageV2.toModelMessage(contextMessages)),
-      ],
-    })
-    const text = await result.text.catch((err) => log.error("failed to generate title", { error: err }))
-    if (text)
-      return Session.update(input.session.id, (draft) => {
-        const cleaned = text
-          .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
-          .split("\n")
-          .map((line) => line.trim())
-          .find((line) => line.length > 0)
-        if (!cleaned) return
+          : MessageV2.toModelMessages(contextMessages, preferredModel)),
+      ]
 
-        const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
-        draft.title = title
+      const streamed = await streamTitleWithFallback({
+        preferredModel,
+        primaryModel,
+        agent,
+        user: firstRealUser.info as MessageV2.User,
+        sessionID: input.session.id,
+        system: [],
+        small: true,
+        tools: {},
+        abort: new AbortController().signal,
+        retries: 2,
+        messages,
       })
+
+      if (!streamed.ok) {
+        log.error("failed to generate title", { error: streamed.error })
+        return
+      }
+
+      const text = streamed.text
+      if (!text) return
+
+      return Session.update(
+        input.session.id,
+        (draft) => {
+          const cleaned = text
+            .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+            .split("\n")
+            .map((line) => line.trim())
+            .find((line) => line.length > 0)
+          if (!cleaned) return
+
+          const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
+          draft.title = title
+        },
+        { touch: false },
+      )
+    } catch (error) {
+      log.error("failed to ensure title", { error })
+    }
   }
 }

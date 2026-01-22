@@ -37,6 +37,7 @@ import { createPerplexity } from "@ai-sdk/perplexity"
 import { createVercel } from "@ai-sdk/vercel"
 import { createGitLab } from "@gitlab/gitlab-ai-provider"
 import { ProviderTransform } from "./transform"
+import { failoverPoolEntry, resolvePoolEntry, type ResolvedPoolEntry } from "./pool"
 
 export namespace Provider {
   const log = Log.create({ service: "provider" })
@@ -730,13 +731,39 @@ export namespace Provider {
     // extend database from config
     for (const [providerID, provider] of configProviders) {
       const existing = database[providerID]
+      const seededModels = iife(() => {
+        if (existing?.models) return existing.models
+        if (provider.models && Object.keys(provider.models).length > 0) return {}
+        const npm = provider.npm
+        if (!npm) return {}
+
+        const preferredTemplateId =
+          {
+            "@ai-sdk/openai": "openai",
+            "@ai-sdk/anthropic": "anthropic",
+            "@ai-sdk/google": "google",
+          }[npm] ?? undefined
+
+        const template =
+          (preferredTemplateId && modelsDev[preferredTemplateId]?.npm === npm ? modelsDev[preferredTemplateId] : null) ??
+          Object.values(modelsDev).find((item) => item.npm === npm)
+        if (!template) return {}
+
+        const templateProvider: ModelsDev.Provider = {
+          ...template,
+          id: providerID,
+          name: provider.name ?? template.name,
+        }
+
+        return mapValues(template.models, (model) => fromModelsDevModel(templateProvider, model))
+      })
       const parsed: Info = {
         id: providerID,
         name: provider.name ?? existing?.name ?? providerID,
         env: provider.env ?? existing?.env ?? [],
         options: mergeDeep(existing?.options ?? {}, provider.options ?? {}),
         source: "config",
-        models: existing?.models ?? {},
+        models: seededModels ?? {},
       }
 
       for (const [modelID, model] of Object.entries(provider.models ?? {})) {
@@ -957,7 +984,7 @@ export namespace Provider {
     return state().then((state) => state.providers)
   }
 
-  async function getSDK(model: Model) {
+  async function getSDK(model: Model, runtime?: { pool?: ResolvedPoolEntry }) {
     try {
       using _ = log.time("getSDK", {
         providerID: model.providerID,
@@ -968,6 +995,11 @@ export namespace Provider {
 
       if (model.api.npm.includes("@ai-sdk/openai-compatible") && options["includeUsage"] !== false) {
         options["includeUsage"] = true
+      }
+
+      if (runtime?.pool) {
+        options["baseURL"] = runtime.pool.baseURL
+        options["apiKey"] = runtime.pool.apiKey
       }
 
       if (!options["baseURL"]) options["baseURL"] = model.api.url
@@ -1081,16 +1113,20 @@ export namespace Provider {
       const suggestions = matches.map((m) => m.target)
       throw new ModelNotFoundError({ providerID, modelID, suggestions })
     }
-    return info
+      return info
   }
 
-  export async function getLanguage(model: Model): Promise<LanguageModelV2> {
+  export async function getLanguage(model: Model, input?: { sessionID?: string }): Promise<LanguageModelV2> {
+    const cfg = await Config.get()
+    const pool = cfg.provider?.[model.providerID]?.pool
+    const pooled = await resolvePoolEntry({ providerID: model.providerID, pool, sessionID: input?.sessionID })
+
     const s = await state()
-    const key = `${model.providerID}/${model.id}`
+    const key = `${model.providerID}/${model.id}/${pooled?.entryId ?? "default"}`
     if (s.models.has(key)) return s.models.get(key)!
 
     const provider = s.providers[model.providerID]
-    const sdk = await getSDK(model)
+    const sdk = await getSDK(model, { pool: pooled })
 
     try {
       const language = s.modelLoaders[model.providerID]
@@ -1109,6 +1145,12 @@ export namespace Provider {
         )
       throw e
     }
+  }
+
+  export async function failoverPool(providerID: string, sessionID?: string) {
+    const cfg = await Config.get()
+    const pool = cfg.provider?.[providerID]?.pool
+    return failoverPoolEntry({ providerID, pool, sessionID })
   }
 
   export async function closest(providerID: string, query: string[]) {
@@ -1143,10 +1185,12 @@ export namespace Provider {
         "3.5-haiku",
         "gemini-3-flash",
         "gemini-2.5-flash",
-        "gpt-5-nano",
+        "gpt-4o-mini",
+        "gpt-4.1-mini",
+        "gpt-5-mini",
       ]
       if (providerID.startsWith("opencode")) {
-        priority = ["gpt-5-nano"]
+        priority = ["gpt-5-mini", "gpt-4o-mini", "gpt-4.1-mini", "gpt-5-nano"]
       }
       if (providerID.startsWith("github-copilot")) {
         // prioritize free models for github copilot
