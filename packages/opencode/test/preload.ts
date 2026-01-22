@@ -5,13 +5,13 @@ import path from "path"
 import fs from "fs/promises"
 import fsSync from "fs"
 import { afterAll } from "bun:test"
-const { Global } = await import("../src/global")
 
 const dir = path.join(os.tmpdir(), "opencode-test-data-" + process.pid)
 await fs.mkdir(dir, { recursive: true })
 afterAll(() => {
   fsSync.rmSync(dir, { recursive: true, force: true })
 })
+
 // Set test home directory to isolate tests from user's actual home directory
 // This prevents tests from picking up real user configs/skills from ~/.claude/skills
 const testHome = path.join(dir, "home")
@@ -24,17 +24,18 @@ process.env["XDG_CONFIG_HOME"] = path.join(dir, "config")
 process.env["XDG_STATE_HOME"] = path.join(dir, "state")
 
 // Pre-fetch models.json so tests don't need network fallback
-// Also write the cache version file to prevent global/index.ts from clearing the cache
-const cacheDir = path.join(dir, "cache", "opencode")
+process.env["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
+
+const { Global } = await import("../src/global")
+
+const cacheDir = Global.Path.cache
 await fs.mkdir(cacheDir, { recursive: true })
-await fs.writeFile(path.join(cacheDir, "version"), "14")
-const url = Global.Path.modelsDevUrl
-const response = await fetch(`${url}/api.json`)
-if (response.ok) {
+
+const modelsDevUrl = Global.Path.modelsDevUrl.replace(/\/+$/, "")
+const response = await fetch(`${modelsDevUrl}/api.json`, { signal: AbortSignal.timeout(10 * 1000) }).catch(() => null)
+if (response?.ok) {
   await fs.writeFile(path.join(cacheDir, "models.json"), await response.text())
 }
-// Disable models.dev refresh to avoid race conditions during tests
-process.env["OPENCODE_DISABLE_MODELS_FETCH"] = "true"
 
 // Clear provider env vars to ensure clean test state
 delete process.env["ANTHROPIC_API_KEY"]
