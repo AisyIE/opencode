@@ -8,7 +8,7 @@ import { Flag } from "../flag/flag"
 export namespace ModelsDev {
   const log = Log.create({ service: "models.dev" })
   const filepath = path.join(Global.Path.cache, "models.json")
-  const api = "https://models.dev/api.json"
+  const api = () => `${Global.Path.modelsDevUrl.replace(/\/+$/, "")}/api.json`
 
   export const Model = z.object({
     id: z.string(),
@@ -89,8 +89,7 @@ export namespace ModelsDev {
         return JSON.parse(await overrideFile.text()) as Record<string, Provider>
       }
     }
-
-    const json = await fetch(api, {
+    const json = await fetch(api(), {
       headers: {
         "User-Agent": Installation.USER_AGENT,
       },
@@ -105,7 +104,7 @@ export namespace ModelsDev {
     log.info("refreshing", {
       file,
     })
-    const result = await fetch(api, {
+    const result = await fetch(api(), {
       headers: {
         "User-Agent": Installation.USER_AGENT,
       },
